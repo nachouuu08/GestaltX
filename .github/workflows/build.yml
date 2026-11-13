@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: xcode-27
+    runs-on: macos-latest
     timeout-minutes: 40
     env:
       REF: ${{ github.event.release.tag_name || inputs.ref || github.ref }}
@@ -50,6 +50,12 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+
+      - name: Test diagnostic components
+        run: |
+          swiftc GestaltX/AdvancedDiagnostics.swift tests/AdvancedDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostic-tests"
+          "$RUNNER_TEMP/diagnostic-tests"
+          python3 tests/LocalizationTests.py
 
       - name: Use the current build script for old tags
         # Tags made before this workflow existed have no build script.

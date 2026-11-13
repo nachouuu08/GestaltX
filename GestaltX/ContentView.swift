@@ -416,6 +416,7 @@ struct ContentView: View {
             if model.needsRespring {
                 Section { Label(L("Some changes require a device restart."), systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary) }
             }
+            Section { NavigationLink { AdvancedDiagnosticsView() } label: { Label("Diagnóstico avanzado", systemImage: "stethoscope") } }
             Section { NavigationLink { SessionLogView() } label: { Label(L("Log"), systemImage: "text.alignleft") } }
         }
         .navigationTitle("GestaltX")

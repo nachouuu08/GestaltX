@@ -1,0 +1,17 @@
+name: Diagnostic tests
+on:
+  push:
+    branches: [diagnostic-ai]
+  workflow_dispatch:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  diagnostics:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run isolated diagnostic tests
+        run: |
+          swiftc GestaltX/AdvancedDiagnostics.swift tests/AdvancedDiagnosticsTests.swift -o "$RUNNER_TEMP/diagnostic-tests"
+          "$RUNNER_TEMP/diagnostic-tests"

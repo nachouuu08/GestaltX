@@ -375,7 +375,10 @@ actor GestaltFileStore {
     }
 
     func loadDevice() throws -> DocumentSnapshot {
-        try withAccess {
+        AdvancedDiagnostics.shared.record("read-start")
+        var diagnosticReadSucceeded = false
+        defer { if !diagnosticReadSucceeded { AdvancedDiagnostics.shared.record("read-error", outcome: "access-or-validation-failed") } }
+        return try withAccess {
             let data = try Data(contentsOf: deviceURL)
             eventSink("Read: \(data.count) bytes; validating plist")
             let document = try GestaltDocument(data: data)
@@ -391,6 +394,8 @@ actor GestaltFileStore {
                 let initialData = hasOriginals ? try baseline.encoded() : data
                 try saveBackup(initialData, source: .device, reason: hasOriginals ? "Original values snapshot" : "Initial backup")
             }
+            diagnosticReadSucceeded = true
+            AdvancedDiagnostics.shared.record("read-complete", extra: document.extra, read: true)
             return DocumentSnapshot(data: data, document: document, source: .device, name: "MobileGestalt",
                                     originals: originals.fields, cachedOptionsOriginal: originals.cachedOptions, wapiOriginal: originals.wapi)
         }
@@ -749,6 +754,16 @@ actor GestaltFileStore {
 
     func commit(_ edited: GestaltDocument, expected: DocumentSnapshot, restoring record: BackupRecord? = nil,
                 originallyAbsentKeys: Set<String> = [], recordingRestoredHardware: Bool = false) throws -> DocumentSnapshot {
+        let diagnostics = AdvancedDiagnostics.shared
+        let diagnosticDeviceWrite = expected.source == .device
+        var diagnosticSucceeded = false
+        if diagnosticDeviceWrite {
+            diagnostics.record("write-before", extra: expected.document.extra)
+            diagnostics.record("write-requested", extra: edited.extra)
+        }
+        defer {
+            if diagnosticDeviceWrite && !diagnosticSucceeded { diagnostics.record("write-error", outcome: "validation-write-or-readback-failed") }
+        }
         guard expected.source != .device || edited.preservesDeviceIdentity(of: expected.document) else {
             throw GestaltFailure("Device identity fields cannot be changed in the system plist. Open a local file to edit these fields.")
         }
@@ -781,6 +796,8 @@ actor GestaltFileStore {
             // a different plist encoding. Validate freshness before skipping it.
             if record != nil, originallyAbsentKeys.isEmpty, edited.matches(expected.document) {
                 eventSink("Restore: the device already matches this plist")
+                diagnosticSucceeded = true
+                diagnostics.record("restore-no-change", extra: expected.document.extra, read: true)
                 return expected
             }
             var baseline = expected
@@ -816,6 +833,8 @@ actor GestaltFileStore {
                 let readback = try Data(contentsOf: deviceURL)
                 guard try edited.matches(GestaltDocument(data: readback)) else { throw GestaltFailure("The write did not match the readback.") }
                 eventSink("Readback: verified")
+                diagnosticSucceeded = true
+                diagnostics.record("write-readback-verified", extra: edited.extra, written: true)
                 return DocumentSnapshot(data: readback, document: edited, source: .device, name: expected.name, originals: originals.fields, cachedOptionsOriginal: originals.cachedOptions, wapiOriginal: originals.wapi)
             } catch {
                 eventSink("Write/readback failed: " + error.localizedDescription)
@@ -825,6 +844,7 @@ actor GestaltFileStore {
                     guard try Data(contentsOf: deviceURL) == current else { throw GestaltFailure("The original file could not be restored.") }
                 } catch { throw GestaltFailure("Write verification and recovery failed. Keep the backup and recover the device file before trying again.") }
                 eventSink("Recovery: previous bytes restored and verified")
+                diagnostics.record("recovery-verified", extra: expected.document.extra)
                 throw GestaltFailure("The write failed. The previous file was restored and verified.")
             }
         }
