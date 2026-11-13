@@ -87,6 +87,11 @@ jobs:
           export BUILD_DATE="$(date -u +%F)"
           .github/scripts/build-ipa.sh "$RUNNER_TEMP/ipa"
 
+      - name: Verify packaged IPA and embedded components
+        env:
+          IPA: ${{ steps.build.outputs.ipa }}
+        run: python3 .github/scripts/verify-ipa.py "$IPA" --verify-signatures
+
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v7
         with:
