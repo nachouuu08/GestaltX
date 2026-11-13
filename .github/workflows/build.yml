@@ -13,7 +13,7 @@ on:
   release:
     types: [published]
   push:
-    branches: [main]
+    branches: [main, diagnostic-ai]
     tags:
       - "v*"
   pull_request:
