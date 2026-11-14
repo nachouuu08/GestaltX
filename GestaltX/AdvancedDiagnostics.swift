@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import Foundation
 import CoreFoundation
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -12,6 +15,7 @@ struct DiagnosticEvent: Codable, Identifiable {
     let operation: String
     let values: [String: String]
     let outcome: String
+    var bootTransition: String? = nil
     var comparisons: [ReadingComparison]? = nil
 }
 
@@ -21,7 +25,7 @@ struct ReadingComparison: Codable {
     let changes: [String: [String]]
     static func compare(_ before: [String: String], _ after: [String: String], basis: String, oldBoot: Double?, newBoot: Double) -> Self {
         let state = oldBoot == nil || oldBoot == 0 || newBoot == 0 ? "unknown" : (oldBoot == newBoot ? "same-boot" : "after-reboot")
-        return Self(basis: basis, bootState: state, changes: Dictionary(uniqueKeysWithValues: AdvancedDiagnostics.flags.filter { before[$0] != after[$0] }.map { ($0, [before[$0] ?? "unknown", after[$0] ?? "unknown"]) }))
+        return Self(basis: basis, bootState: state == "after-reboot" && basis != "previous-reading" ? "different-boot-from-baseline" : state, changes: Dictionary(uniqueKeysWithValues: AdvancedDiagnostics.flags.filter { before[$0] != after[$0] }.map { ($0, [before[$0] ?? "unknown", after[$0] ?? "unknown"]) }))
     }
 }
 
@@ -39,6 +43,8 @@ final class AdvancedDiagnostics: @unchecked Sendable {
         var boot: Double?
         var observed: [String: String]?
         var observedBoot: Double?
+        var previous: [String: String]?
+        var previousBoot: Double?
     }
     private let lock = NSLock()
     private let url: URL
@@ -81,18 +87,25 @@ final class AdvancedDiagnostics: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let values = extra.map(Self.values) ?? [:]
         let boot = bootProvider()
-        var comparisons: [ReadingComparison] = []
+        var bootTransition: String? = nil
+    var comparisons: [ReadingComparison] = []
         if read, extra != nil {
+            transition = ReadingComparison.compare(values, values, basis: "previous-reading", oldBoot: archive.previousBoot, newBoot: boot).bootState
+            if let previous = archive.previous {
+                comparisons.append(.compare(previous, values, basis: "previous-reading", oldBoot: archive.previousBoot, newBoot: boot))
+            }
+
             if let baseline = archive.observed {
                 comparisons.append(.compare(baseline, values, basis: "observed-reading", oldBoot: archive.observedBoot, newBoot: boot))
             } else { archive.observed = values; archive.observedBoot = boot }
+            archive.previous = values; archive.previousBoot = boot
             if let baseline = archive.expected {
                 comparisons.append(.compare(baseline, values, basis: "verified-write", oldBoot: archive.boot, newBoot: boot))
             }
         }
         if written, extra != nil { archive.expected = values; archive.boot = boot }
         let result = comparisons.contains { !$0.changes.isEmpty } ? "changed-or-reverted" : outcome
-        archive.events.append(DiagnosticEvent(id: UUID(), session: session, timestamp: Date(), operation: operation, values: values, outcome: result, comparisons: comparisons))
+        archive.events.append(DiagnosticEvent(id: UUID(), session: session, timestamp: Date(), operation: operation, values: values, outcome: result, bootTransition: transition, comparisons: comparisons))
         if archive.events.count > 500 { archive.events.removeFirst(archive.events.count - 500) }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -100,10 +113,12 @@ final class AdvancedDiagnostics: @unchecked Sendable {
             storageFailed = false
         } catch { storageFailed = true }
     }
-    func report(pending: [String: String] = [:]) throws -> String {
+    func report(pending: [String: String] = [:], intelligence: IntelligenceDiagnostic? = nil) throws -> String {
         lock.lock(); defer { lock.unlock() }
         struct Report: Encodable {
-            let schema = 2
+            let schema = 3
+            let intelligence: IntelligenceDiagnostic?
+            let intelligenceSummary: String?
             let pending: [String: String]
             let interpretation = "Equal readings show observed stability only, never Siri or Apple Intelligence functionality."
             let os: String
@@ -122,6 +137,50 @@ final class AdvancedDiagnostics: @unchecked Sendable {
         }
         #endif
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-        return String(decoding: try encoder.encode(Report(pending: pending, os: ProcessInfo.processInfo.operatingSystemVersionString, model: model, storageFailed: storageFailed, events: archive.events)), as: UTF8.self)
+        return String(decoding: try encoder.encode(Report(intelligence: intelligence, intelligenceSummary: intelligence?.summary, pending: pending, os: ProcessInfo.processInfo.operatingSystemVersionString, model: model, storageFailed: storageFailed, events: archive.events)), as: UTF8.self)
+    }
+}
+
+
+struct IntelligenceDiagnostic: Codable {
+    enum Status: String, Codable, CaseIterable {
+        case available, deviceNotEligible, modelNotReady, appleIntelligenceNotEnabled, apiUnavailable, unknownResponse, error
+    }
+    let timestamp: Date
+    let status: Status
+    let siri = "unknown-not-measured"
+    let download = "unknown-no-public-progress-evidence"
+    var summary: String {
+        switch status {
+        case .available: return "El modelo local de Foundation Models está disponible para apps. Esto no verifica Siri."
+        case .deviceNotEligible: return "La API informa que el dispositivo no es elegible. Flags persistentes no sustituyen la elegibilidad del modelo."
+        case .modelNotReady: return "La API informa que el modelo no está listo. No identifica la causa ni demuestra una descarga activa."
+        case .appleIntelligenceNotEnabled: return "La API informa que Apple Intelligence no está habilitado, independientemente de los flags MobileGestalt."
+        case .apiUnavailable: return "API no disponible en este SDK o sistema. Disponibilidad del modelo desconocida."
+        case .unknownResponse: return "La API devolvió un estado nuevo no reconocido."
+        case .error: return "No se pudo completar la consulta. No se exportan detalles de error sensibles."
+        }
+    }
+    static func capture() -> Self {
+        let status: Status
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, macOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available: status = .available
+            case .unavailable(let reason):
+                switch reason {
+                case .deviceNotEligible: status = .deviceNotEligible
+                case .modelNotReady: status = .modelNotReady
+                case .appleIntelligenceNotEnabled: status = .appleIntelligenceNotEnabled
+                @unknown default: status = .unknownResponse
+                }
+            @unknown default: status = .unknownResponse
+            }
+        } else { status = .apiUnavailable }
+        #else
+        status = .apiUnavailable
+        #endif
+        // availability is a nonthrowing public getter; no session, generation or download request.
+        return Self(timestamp: Date(), status: status)
     }
 }

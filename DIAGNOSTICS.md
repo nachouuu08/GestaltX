@@ -26,3 +26,14 @@ The UI separates loaded MobileGestalt, pending preset selections, observed compa
 
 Apple documents SystemLanguageModel.availability as availability of the on-device Foundation Models model for apps: https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel/availability-swift.property
 This is not a documented readiness check for the complete Siri pipeline. This edition therefore reports Siri functionality as unknown and does not query private services, instantiate generation sessions or invent download progress. Equal plist values establish observed stability only.
+
+
+## Public availability query (schema 3)
+The screen queries SystemLanguageModel.default.availability only, guarded by canImport(FoundationModels) and OS availability. It records the timestamp, available/deviceNotEligible/modelNotReady/appleIntelligenceNotEnabled, API unavailability or an unknown future response. The getter does not throw; error is reserved in the schema and is never fabricated. No LanguageModelSession, asset request or private-file inspection is used. Export includes the interpretation separately from Siri functionality and unknown download progress.
+
+Public indicators investigated:
+- https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel — local model availability for app requests, not end-to-end Siri readiness.
+- https://developer.apple.com/documentation/speech/sfspeechrecognizer — recognition service availability depends on locale and sometimes connectivity; not Siri model readiness.
+- https://developer.apple.com/documentation/intents/inpreferences/siriauthorizationstatus() — authorization for this app to interact with Siri, not global functionality. These unrelated permissions are not requested or treated as readiness evidence.
+
+Original baseline and verified-write comparisons use different-boot-from-baseline. Only comparison with the immediately preceding successful reading can report after-reboot. Successful reads persist that previous sample and boot identity; failed reads and write events do not advance it. On legacy archives without a previous boot sample, transition is unknown until a fresh successful read establishes it. Raw boot timestamps remain local. Stable flags, a storage size or an Updating label do not prove downloading or Siri functionality.

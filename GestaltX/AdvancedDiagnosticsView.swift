@@ -16,6 +16,7 @@ private struct DiagnosticReportFile: FileDocument {
 
 struct AdvancedDiagnosticsView: View {
     @EnvironmentObject private var model: GestaltManager
+    @State private var intelligence: IntelligenceDiagnostic?
     @State private var report = ""
     @State private var exporting = false
     @State private var error: String?
@@ -33,6 +34,15 @@ struct AdvancedDiagnosticsView: View {
                 ForEach(model.diagnosticPending.keys.sorted(), id: \.self) { key in
                     LabeledContent(key, value: model.diagnosticPending[key] ?? "unknown")
                 }
+            }
+            Section("Estado de Apple Intelligence") {
+                LabeledContent("Foundation Models", value: intelligence?.status.rawValue ?? "not-queried")
+                if let intelligence {
+                    Text(intelligence.timestamp.formatted())
+                    Text(intelligence.summary)
+                }
+                Button("Consultar API pública") { refresh() }
+                Text("Siri: funcionamiento desconocido. Descargas: progreso desconocido. El tamaño ocupado o el texto Actualizando no permiten confirmar una descarga activa desde esta API.")
             }
             Section("Siri y Apple Intelligence") {
                 Text("MobileGestalt y lecturas iguales no prueban funcionalidad. La API pública SystemLanguageModel.availability informa disponibilidad del modelo local para apps, no preparación completa de Siri ni progreso de descargas. Estado funcional de Siri: desconocido; requiere observación manual.")
@@ -73,7 +83,7 @@ struct AdvancedDiagnosticsView: View {
               let comparisons = event["comparisons"] as? [[String: Any]], !comparisons.isEmpty else {
             return "Sin comparación: registra una línea base y una lectura posterior."
         }
-        return comparisons.map { comparison in
+        return "Cambio de arranque desde la lectura anterior: " + (event["bootTransition"] as? String ?? "unknown") + "\n\n" + comparisons.map { comparison in
             let changes = comparison["changes"] as? [String: [String]] ?? [:]
             let details = changes.keys.sorted().map { key in key + ": " + (changes[key] ?? []).joined(separator: " → ") }.joined(separator: "\n")
             return (comparison["basis"] as? String ?? "unknown") + " · " + (comparison["bootState"] as? String ?? "unknown") + "\n" + (changes.isEmpty ? "Sin diferencias observadas. No prueba funcionalidad." : details)
@@ -86,7 +96,8 @@ struct AdvancedDiagnosticsView: View {
         return (event["operation"] as? String ?? "unknown") + " · " + (event["outcome"] as? String ?? "unknown")
     }
     private func refresh() {
-        do { report = try AdvancedDiagnostics.shared.report(pending: model.diagnosticPending); error = nil }
+        intelligence = IntelligenceDiagnostic.capture()
+        do { report = try AdvancedDiagnostics.shared.report(pending: model.diagnosticPending, intelligence: intelligence); error = nil }
         catch { self.error = "No se pudo preparar el informe." }
     }
 }

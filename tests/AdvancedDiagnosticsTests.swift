@@ -24,7 +24,7 @@ import Foundation
         let object = try JSONSerialization.jsonObject(with: Data(reopened.report().utf8)) as! [String: Any]
         precondition((object["events"] as! [Any]).count == 500)
         let changed = ReadingComparison.compare([key: "number:1"], [key: "number:2"], basis: "observed-reading", oldBoot: 10, newBoot: 20)
-        precondition(changed.bootState == "after-reboot" && changed.changes[key] == ["number:1", "number:2"])
+        precondition(changed.bootState == "different-boot-from-baseline" && changed.changes[key] == ["number:1", "number:2"])
         precondition(ReadingComparison.compare(values, values, basis: "observed-reading", oldBoot: 10, newBoot: 10).changes.isEmpty)
         precondition(ReadingComparison.compare(values, values, basis: "observed-reading", oldBoot: 0, newBoot: 10).bootState == "unknown")
         let readURL = url.deletingLastPathComponent().appendingPathComponent("read-only.json")
@@ -39,6 +39,21 @@ import Foundation
         let decoded = try JSONSerialization.jsonObject(with: Data(readReport.utf8)) as! [String: Any]
         let events = decoded["events"] as! [[String: Any]]
         precondition((events[0]["values"] as! [String: String]).isEmpty)
+        let repeated = AdvancedDiagnostics(url: readURL, bootProvider: { 20 })
+        repeated.record("read-complete", extra: [key: 2], read: true)
+        let repeatedJSON = try JSONSerialization.jsonObject(with: Data(repeated.report().utf8)) as! [String: Any]
+        let last = (repeatedJSON["events"] as! [[String: Any]]).last!
+        precondition(last["bootTransition"] as? String == "same-boot")
+        let comparisons = last["comparisons"] as! [[String: Any]]
+        precondition((comparisons.first { $0["basis"] as? String == "previous-reading" }!["changes"] as! [String: Any]).isEmpty)
+        precondition(!(comparisons.first { $0["basis"] as? String == "observed-reading" }!["changes"] as! [String: Any]).isEmpty)
+        for status in IntelligenceDiagnostic.Status.allCases {
+            let sample = IntelligenceDiagnostic(timestamp: Date(), status: status)
+            let encoded = try JSONEncoder().encode(sample)
+            let decodedSample = try JSONDecoder().decode(IntelligenceDiagnostic.self, from: encoded)
+            precondition(decodedSample.status == status)
+            precondition(!sample.summary.isEmpty)
+        }
         print("AdvancedDiagnosticsTests passed")
     }
 }
