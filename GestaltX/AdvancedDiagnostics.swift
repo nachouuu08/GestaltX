@@ -12,6 +12,17 @@ struct DiagnosticEvent: Codable, Identifiable {
     let operation: String
     let values: [String: String]
     let outcome: String
+    var comparisons: [ReadingComparison]? = nil
+}
+
+struct ReadingComparison: Codable {
+    let basis: String
+    let bootState: String
+    let changes: [String: [String]]
+    static func compare(_ before: [String: String], _ after: [String: String], basis: String, oldBoot: Double?, newBoot: Double) -> Self {
+        let state = oldBoot == nil || oldBoot == 0 || newBoot == 0 ? "unknown" : (oldBoot == newBoot ? "same-boot" : "after-reboot")
+        return Self(basis: basis, bootState: state, changes: Dictionary(uniqueKeysWithValues: AdvancedDiagnostics.flags.filter { before[$0] != after[$0] }.map { ($0, [before[$0] ?? "unknown", after[$0] ?? "unknown"]) }))
+    }
 }
 
 /// A closed schema: no raw errors, paths, device identifiers, plist strings or blobs.
@@ -26,15 +37,19 @@ final class AdvancedDiagnostics: @unchecked Sendable {
         var events: [DiagnosticEvent] = []
         var expected: [String: String]?
         var boot: Double?
+        var observed: [String: String]?
+        var observedBoot: Double?
     }
     private let lock = NSLock()
     private let url: URL
+    private let bootProvider: () -> Double
     private let session = UUID()
     private var archive: Archive
     private(set) var storageFailed = false
 
     init(url: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("GestaltX/Diagnostics/report.json")) {
+        .appendingPathComponent("GestaltX/Diagnostics/report.json"), bootProvider: @escaping () -> Double = { AdvancedDiagnostics.boot }) {
+        self.bootProvider = bootProvider
         self.url = url
         archive = (try? JSONDecoder().decode(Archive.self, from: Data(contentsOf: url))) ?? Archive()
     }
@@ -54,7 +69,7 @@ final class AdvancedDiagnostics: @unchecked Sendable {
     static func comparison(expected: [String: String], actual: [String: String]) -> String {
         expected == actual ? "persisted" : "changed-or-reverted"
     }
-    private static var boot: Double {
+    static var boot: Double {
         #if canImport(Darwin)
         var time = timeval()
         var size = MemoryLayout<timeval>.size
@@ -62,16 +77,22 @@ final class AdvancedDiagnostics: @unchecked Sendable {
         #endif
         return 0
     }
-    func record(_ operation: String, extra: [String: Any] = [:], outcome: String = "ok", written: Bool = false, read: Bool = false) {
+    func record(_ operation: String, extra: [String: Any]? = nil, outcome: String = "ok", written: Bool = false, read: Bool = false) {
         lock.lock(); defer { lock.unlock() }
-        let values = Self.values(extra)
-        var result = outcome
-        if read, let expected = archive.expected {
-            let rebooted = Self.boot != 0 && archive.boot != nil && archive.boot != Self.boot
-            result = (rebooted ? "after-reboot:" : "same-boot:") + Self.comparison(expected: expected, actual: values)
+        let values = extra.map(Self.values) ?? [:]
+        let boot = bootProvider()
+        var comparisons: [ReadingComparison] = []
+        if read, extra != nil {
+            if let baseline = archive.observed {
+                comparisons.append(.compare(baseline, values, basis: "observed-reading", oldBoot: archive.observedBoot, newBoot: boot))
+            } else { archive.observed = values; archive.observedBoot = boot }
+            if let baseline = archive.expected {
+                comparisons.append(.compare(baseline, values, basis: "verified-write", oldBoot: archive.boot, newBoot: boot))
+            }
         }
-        if written { archive.expected = values; archive.boot = Self.boot }
-        archive.events.append(DiagnosticEvent(id: UUID(), session: session, timestamp: Date(), operation: operation, values: values, outcome: result))
+        if written, extra != nil { archive.expected = values; archive.boot = boot }
+        let result = comparisons.contains { !$0.changes.isEmpty } ? "changed-or-reverted" : outcome
+        archive.events.append(DiagnosticEvent(id: UUID(), session: session, timestamp: Date(), operation: operation, values: values, outcome: result, comparisons: comparisons))
         if archive.events.count > 500 { archive.events.removeFirst(archive.events.count - 500) }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -79,10 +100,12 @@ final class AdvancedDiagnostics: @unchecked Sendable {
             storageFailed = false
         } catch { storageFailed = true }
     }
-    func report() throws -> String {
+    func report(pending: [String: String] = [:]) throws -> String {
         lock.lock(); defer { lock.unlock() }
         struct Report: Encodable {
-            let schema = 1
+            let schema = 2
+            let pending: [String: String]
+            let interpretation = "Equal readings show observed stability only, never Siri or Apple Intelligence functionality."
             let os: String
             let model: String
             let access = "existing worse_query sandbox extension; readback verification"
@@ -99,6 +122,6 @@ final class AdvancedDiagnostics: @unchecked Sendable {
         }
         #endif
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-        return String(decoding: try encoder.encode(Report(os: ProcessInfo.processInfo.operatingSystemVersionString, model: model, storageFailed: storageFailed, events: archive.events)), as: UTF8.self)
+        return String(decoding: try encoder.encode(Report(pending: pending, os: ProcessInfo.processInfo.operatingSystemVersionString, model: model, storageFailed: storageFailed, events: archive.events)), as: UTF8.self)
     }
 }

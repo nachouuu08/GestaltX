@@ -21,8 +21,25 @@ struct AdvancedDiagnosticsView: View {
     @State private var error: String?
     var body: some View {
         List {
+            Section("Estado actual · MobileGestalt") {
+                Text("Último documento cargado; desconocido hasta leer. No representa las selecciones de presets.")
+                ForEach(Capability.all.filter { !$0.keys.allSatisfy { !AdvancedDiagnostics.flags.contains($0) } }, id: \.id) { capability in
+                    ForEach(capability.keys.filter { AdvancedDiagnostics.flags.contains($0) }, id: \.self) { key in
+                        LabeledContent(capability.title, value: model.snapshot.map { AdvancedDiagnostics.values($0.document.extra)[key] ?? "unknown" } ?? "unknown")
+                    }
+                }
+            }
+            Section("Interfaz de presets · cambios pendientes") {
+                ForEach(model.diagnosticPending.keys.sorted(), id: \.self) { key in
+                    LabeledContent(key, value: model.diagnosticPending[key] ?? "unknown")
+                }
+            }
+            Section("Siri y Apple Intelligence") {
+                Text("MobileGestalt y lecturas iguales no prueban funcionalidad. La API pública SystemLanguageModel.availability informa disponibilidad del modelo local para apps, no preparación completa de Siri ni progreso de descargas. Estado funcional de Siri: desconocido; requiere observación manual.")
+            }
+
             Section {
-                Text("Registra lecturas y escrituras del dispositivo. Después de reiniciar, vuelve a leer para comparar con la última escritura verificada. Un cambio de flags no demuestra que Apple Intelligence esté disponible.")
+                Text("Registra lecturas y escrituras del dispositivo. Después de reiniciar, vuelve a leer para comparar con la primera lectura observada y, si existe, la última escritura verificada. Un cambio de flags no demuestra que Apple Intelligence esté disponible.")
                 Text("La lectura usa el acceso existente y puede crear el respaldo habitual. Descarta o guarda cambios pendientes antes de leer.")
                 Button("Registrar / comparar lectura actual") {
                     Task { await model.connect(); refresh() }
@@ -42,7 +59,7 @@ struct AdvancedDiagnosticsView: View {
         }
     }
     private func refresh() {
-        do { report = try AdvancedDiagnostics.shared.report(); error = nil }
+        do { report = try AdvancedDiagnostics.shared.report(pending: model.diagnosticPending); error = nil }
         catch { self.error = "No se pudo preparar el informe." }
     }
 }

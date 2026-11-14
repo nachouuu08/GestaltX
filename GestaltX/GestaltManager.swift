@@ -630,3 +630,25 @@ final class GestaltManager: ObservableObject {
         try TemporaryExport(data: data, name: name)
     }
 }
+
+
+extension GestaltManager {
+    var diagnosticPending: [String: String] {
+        var result = ["changeCount": String(changeCount), "isBusy": String(isBusy),
+                      "document": hasDocument ? (sourceIsDevice ? "device" : "local") : "none",
+                      "applyDisabledReasons": [isBusy ? "isBusy" : nil, changeCount == 0 ? "changeCount=0" : nil].compactMap { $0 }.joined(separator: ", "),
+                      "selectionLifecycle": "accept() resets presets to Keep Current; presets are not device state."]
+        for capability in Capability.all {
+            let choice = choices[capability.id] ?? .keep
+            let changed = !Set(changeKeys).isDisjoint(with: capability.keys)
+            result["preset." + capability.id] = String(describing: choice) + (choice != .keep && !changed ? " (no effective difference; requested result already present or preset has no effect)" : "")
+        }
+        result["otherPresets"] = "region=\(regionID); regionCode=\(regionCodeID); model=\(modelID); cache=\(cacheOptionChoice); wapi=\(wapiChoice); nameEdited=\(changesName); subtypeEdited=\(subtype != 0)"
+        if let before = snapshot?.document.extra, let after = preview?.extra {
+            let old = AdvancedDiagnostics.values(before), new = AdvancedDiagnostics.values(after)
+            for key in AdvancedDiagnostics.flags where old[key] != new[key] { result["difference." + key] = "\(old[key]!) → \(new[key]!)" }
+        }
+        result["otherEffectiveDifferences"] = String(changeKeys.filter { !AdvancedDiagnostics.flags.contains($0) }.count) + " non-AI keys (values omitted); " + String(cacheDataChanges.count) + " cache flags"
+        return result
+    }
+}
