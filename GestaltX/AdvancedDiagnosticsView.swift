@@ -48,6 +48,12 @@ struct AdvancedDiagnosticsView: View {
                 Button("Exportar JSON") { refresh(); if error == nil { exporting = true } }
                 if let error { Text(error).foregroundStyle(.red) }
             }
+            Section("Estado observado después del reinicio") {
+                Text(comparisonSummary)
+            }
+            Section("Escritura y verificación") {
+                Text(writeSummary)
+            }
             Section("Eventos (máximo 500)") {
                 Text(report).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
             }
@@ -57,6 +63,27 @@ struct AdvancedDiagnosticsView: View {
         .fileExporter(isPresented: $exporting, document: DiagnosticReportFile(text: report), contentType: .json, defaultFilename: "GestaltX-diagnostic") { result in
             if case .failure = result { error = "No se pudo exportar el informe." }
         }
+    }
+    private var events: [[String: Any]] {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(report.utf8)) as? [String: Any] else { return [] }
+        return object["events"] as? [[String: Any]] ?? []
+    }
+    private var comparisonSummary: String {
+        guard let event = events.last(where: { ($0["operation"] as? String) == "read-complete" }),
+              let comparisons = event["comparisons"] as? [[String: Any]], !comparisons.isEmpty else {
+            return "Sin comparación: registra una línea base y una lectura posterior."
+        }
+        return comparisons.map { comparison in
+            let changes = comparison["changes"] as? [String: [String]] ?? [:]
+            let details = changes.keys.sorted().map { key in key + ": " + (changes[key] ?? []).joined(separator: " → ") }.joined(separator: "\n")
+            return (comparison["basis"] as? String ?? "unknown") + " · " + (comparison["bootState"] as? String ?? "unknown") + "\n" + (changes.isEmpty ? "Sin diferencias observadas. No prueba funcionalidad." : details)
+        }.joined(separator: "\n\n")
+    }
+    private var writeSummary: String {
+        guard let event = events.last(where: { ($0["operation"] as? String)?.hasPrefix("write-") == true }) else {
+            return "No hay eventos de escritura. Una lectura no verifica una escritura."
+        }
+        return (event["operation"] as? String ?? "unknown") + " · " + (event["outcome"] as? String ?? "unknown")
     }
     private func refresh() {
         do { report = try AdvancedDiagnostics.shared.report(pending: model.diagnosticPending); error = nil }

@@ -17,3 +17,12 @@ The dedicated manual/PR workflow runs these isolated tests. The app target synch
 The existing Build IPA workflow has workflow_dispatch with a ref input; choose diagnostic-ai after pushing to a fork. Its script disables Xcode signing, then uses codesign -s - for ad hoc signatures and packages Payload as IPA, preserving App Group entitlements. No private signing certificate is used. Installing requires a compatible re-signing tool and usable App Groups. A generated IPA alone does not guarantee device access.
 
 The diagnostic branch uses GitHub-hosted macos-latest runners and runs isolated Swift tests and localization checks before building. Branch pushes also trigger the existing IPA workflow. The packaged IPA is checked for arm64 executables, extension metadata, signatures and exact source entitlements before upload. The existing workflow publishes release assets only when TAG is set; a manual branch run has no TAG. No release or device action was performed.
+
+
+## Reading baseline and public API limits
+Schema 2 keeps the first successful reading independently of the last verified write. Boot identity is persisted locally using kern.boottime; zero or missing boot identity means unknown, not a confirmed restart. Comparisons list exact allowlisted keys with before/after values. A read-start has no values. Missing keys in a successfully read document remain absent. Existing archives without a reading baseline establish one on their next successful read.
+
+The UI separates loaded MobileGestalt, pending preset selections, observed comparisons and write verification. Effective AI differences are exported with bounded values; other differences are counted without exporting their values. accept() continues resetting selections as in the original application.
+
+Apple documents SystemLanguageModel.availability as availability of the on-device Foundation Models model for apps: https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel/availability-swift.property
+This is not a documented readiness check for the complete Siri pipeline. This edition therefore reports Siri functionality as unknown and does not query private services, instantiate generation sessions or invent download progress. Equal plist values establish observed stability only.
