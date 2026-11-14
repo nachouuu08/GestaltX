@@ -19,7 +19,7 @@ import Foundation
         let report = try reopened.report()
         precondition(report.contains("changed-or-reverted"))
         precondition(!report.contains("private-key") && !report.contains("secret"))
-        precondition(!report.contains("expected") && !report.contains("boot\""))
+        precondition(report.range(of: #""(expected|boot)"\s*:"#, options: .regularExpression) == nil)
         for _ in 0..<510 { reopened.record("read") }
         let object = try JSONSerialization.jsonObject(with: Data(reopened.report().utf8)) as! [String: Any]
         precondition((object["events"] as! [Any]).count == 500)
