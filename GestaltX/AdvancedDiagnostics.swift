@@ -87,8 +87,8 @@ final class AdvancedDiagnostics: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let values = extra.map(Self.values) ?? [:]
         let boot = bootProvider()
-        var bootTransition: String? = nil
-    var comparisons: [ReadingComparison] = []
+        var transition: String? = nil
+        var comparisons: [ReadingComparison] = []
         if read, extra != nil {
             transition = ReadingComparison.compare(values, values, basis: "previous-reading", oldBoot: archive.previousBoot, newBoot: boot).bootState
             if let previous = archive.previous {
@@ -148,8 +148,8 @@ struct IntelligenceDiagnostic: Codable {
     }
     let timestamp: Date
     let status: Status
-    let siri = "unknown-not-measured"
-    let download = "unknown-no-public-progress-evidence"
+    private(set) var siri = "unknown-not-measured"
+    private(set) var download = "unknown-no-public-progress-evidence"
     var summary: String {
         switch status {
         case .available: return "El modelo local de Foundation Models está disponible para apps. Esto no verifica Siri."
